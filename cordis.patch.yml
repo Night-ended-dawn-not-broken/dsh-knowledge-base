@@ -1,0 +1,14 @@
+# dsh-knowledge-base bundle patch.
+#
+# One Host row serves:
+#   - the kb_search / kb_add agent tools (edit and delete stay in the UI),
+#   - the "knowledge base first" rule injected into the system prompt,
+#   - the web-search gate and enrichment that puts knowledge base content
+#     ahead of web results,
+#   - the local JSON routes behind Settings → 知识库.
+#
+# The browser half joins the client module graph automatically because
+# package.json declares `dsh.client` and exports "./client".
+- insert:
+    - id: knowledge-base
+      name: dsh-knowledge-base

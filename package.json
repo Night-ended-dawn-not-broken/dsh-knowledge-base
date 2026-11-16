@@ -1,0 +1,62 @@
+{
+  "name": "dsh-knowledge-base",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Manually curated knowledge base: the agent consults it before web search and treats its content as authoritative.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "knowledge-base",
+    "rag"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "store.js",
+    "buffer.js",
+    "reflux.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.1-rc.2 <0.3.0"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "test": "node test/store.test.mjs && node test/reflux.test.mjs && node test/host.test.mjs",
+    "check": "node --check index.js && node --check client.js && node --check store.js && node --check buffer.js && node --check reflux.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Night-ended-dawn-not-broken/dsh-knowledge-base.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Night-ended-dawn-not-broken/dsh-knowledge-base/issues"
+  },
+  "homepage": "https://github.com/Night-ended-dawn-not-broken/dsh-knowledge-base#readme",
+  "author": "Night-ended-dawn-not-broken"
+}

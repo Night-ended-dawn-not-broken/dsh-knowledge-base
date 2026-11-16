@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Knowledge Base",
+    "description": "Manually curated material that the agent consults before web search and treats as the authoritative answer source."
+  }
+}
