@@ -1,10 +1,18 @@
-# 知识库（dsh-knowledge-base）
+# 知识库（@night-ended-dawn-not-broken/dsh-knowledge-base）
 
 手动录入资料，并让 Harness 的模型在**每次联网检索时先检索知识库**，以知识库内容为优先标准回复。联网检索本身照常进行，不会被拦截。知识库支持 **AES-256-GCM 落盘加密 + 口令锁定**。
+
+> npm 上的 `dsh-knowledge-base` 已被其他作者占用，因此本包发布在 `@night-ended-dawn-not-broken` scope 下。
 
 ## 安装
 
 要求 DeepSeek Harness `>=0.2.1-rc.2 <0.3.0`，Node.js 20+。
+
+从 npm 安装：
+
+```sh
+dsh plugin --profile desktop add @night-ended-dawn-not-broken/dsh-knowledge-base
+```
 
 从 GitHub 安装（纯 JavaScript，无需构建步骤）：
 

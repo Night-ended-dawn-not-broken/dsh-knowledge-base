@@ -1,7 +1,6 @@
 {
-  "name": "dsh-knowledge-base",
+  "name": "@night-ended-dawn-not-broken/dsh-knowledge-base",
   "version": "1.0.0",
-  "private": true,
   "description": "Manually curated knowledge base: the agent consults it before web search and treats its content as authoritative.",
   "type": "module",
   "license": "MIT",
@@ -58,5 +57,9 @@
     "url": "https://github.com/Night-ended-dawn-not-broken/dsh-knowledge-base/issues"
   },
   "homepage": "https://github.com/Night-ended-dawn-not-broken/dsh-knowledge-base#readme",
-  "author": "Night-ended-dawn-not-broken"
+  "author": "Night-ended-dawn-not-broken",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
 }

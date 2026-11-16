@@ -11,4 +11,4 @@
 # package.json declares `dsh.client` and exports "./client".
 - insert:
     - id: knowledge-base
-      name: dsh-knowledge-base
+      name: '@night-ended-dawn-not-broken/dsh-knowledge-base'

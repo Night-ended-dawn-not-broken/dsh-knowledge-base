@@ -11,7 +11,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-knowledge-base',
+  id: '@night-ended-dawn-not-broken/dsh-knowledge-base',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
