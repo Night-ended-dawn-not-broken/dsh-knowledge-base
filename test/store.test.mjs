@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore, looksSensitive, tokensOf } from '../store.js'
@@ -181,5 +181,7 @@ assert(recovered.stats().loadError !== null, 'corrupt load reported')
 
 assert(tokensOf('退款 7天 ABC').includes('退款'), 'tokenizer keeps bigram')
 assert(tokensOf('ABC').includes('abc'), 'tokenizer lowercases latin')
+
+await rm(dir, { recursive: true, force: true })
 
 console.log('\nall store tests passed')
