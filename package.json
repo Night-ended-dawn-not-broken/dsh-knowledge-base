@@ -44,7 +44,7 @@
     }
   },
   "scripts": {
-    "test": "node test/store.test.mjs && node test/reflux.test.mjs && node test/host.test.mjs",
+    "test": "node test/store.test.mjs && node test/reflux.test.mjs && node test/buffer.test.mjs && node test/host.test.mjs",
     "check": "node --check index.js && node --check client.js && node --check store.js && node --check buffer.js && node --check reflux.js"
   },
   "engines": {
