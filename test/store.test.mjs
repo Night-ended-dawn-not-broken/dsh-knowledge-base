@@ -88,18 +88,53 @@ assert(store.pending().some((entry) => entry.title === '退款规则'), 'the ear
 assert(store.pending().some((entry) => entry.title === '发货时效'), 'the later note is there too')
 
 /* --- digest notes: a mere credential mention is not a secret ------------- */
-const plainNote = await store.addPending({
+const plain = await store.addPending({
   title: '接口返回码',
   content: '知识点整理（2026-11-12）\n\n- 接口返回 423 表示知识库已锁定，不能用口令绕过。',
 })
-assert(plainNote.state === 'pending' && plainNote.origin === 'reflux', 'addPending stores an unreviewed note')
-assert(plainNote.sensitive === false, 'a note that only mentions credentials stays searchable')
+assert(plain.discarded === false, 'a new note is stored')
+assert(plain.entry.state === 'pending' && plain.entry.origin === 'reflux', 'addPending stores an unreviewed note')
+assert(plain.entry.sensitive === false, 'a note that only mentions credentials stays searchable')
 
-const secretNote = await store.addPending({
+const credentialNote = await store.addPending({
   title: '账号',
   content: '知识点整理（2026-11-12）\n\n- 后台密码是 Passw0rd!',
 })
-assert(secretNote.sensitive === true, 'a note that carries a credential value is hidden')
+assert(credentialNote.entry.sensitive === true, 'a note that carries a credential value is hidden')
+
+/* --- digest notes: fully duplicate is discarded, partial is compared ----- */
+const beforeDup = store.counts().pending
+const duplicate = await store.addPending({
+  title: '退款政策补充',
+  content: '知识点整理（2026-11-12）\n\n- 客户在签收后 7 天内可以申请无理由退款。超过 7 天需人工审核。',
+})
+assert(duplicate.discarded === true, 'a note whose lines are all covered is discarded')
+assert(duplicate.compare.matches[0].id === a.id, 'the duplicate points at the existing entry')
+assert(store.counts().pending === beforeDup, 'a discarded note is not stored')
+
+const partial = await store.addPending({
+  title: '退款与发票',
+  content:
+    '知识点整理（2026-11-12）\n\n- 客户在签收后 7 天内可以申请无理由退款。超过 7 天需人工审核。\n- 发票在退款完成后 3 个工作日内开出。',
+})
+assert(partial.discarded === false, 'a note with new lines is stored')
+assert(partial.compare.same.length === 1 && partial.compare.added.length === 1, 'the comparison splits repeated and new lines')
+assert(partial.entry.compare.withId === a.id && partial.entry.compare.withTitle === '退款政策', 'the entry records which entry it overlaps')
+assert(partial.entry.compare.addedLines.some((line) => line.includes('发票')), 'the new line is listed for review')
+
+/* --- retrieval health metrics ------------------------------------------- */
+const indexAll = store.indexStats()
+assert(indexAll.entries === store.count() && indexAll.truncated === 0, 'index stats count every confirmed entry')
+assert(indexAll.chars > 0 && indexAll.budget === 4000, 'index stats report usage against the budget')
+const indexTight = store.indexStats(120)
+assert(indexTight.truncated > 0, 'a small budget reports the entries that fell out of the index')
+assert(store.sensitiveCount() >= 1, 'sensitive entries are counted separately (they stay out of any vector index)')
+
+const missesBefore = store.searchStats().misses
+await store.noteMiss('完全搜不到的查询')
+const afterMiss = store.searchStats()
+assert(afterMiss.misses === missesBefore + 1, 'a missed query is counted')
+assert(afterMiss.lastMissQuery === '完全搜不到的查询', 'the missed query is kept for review')
 
 /* --- settings ----------------------------------------------------------- */
 await store.updateSettings({ recall: false })

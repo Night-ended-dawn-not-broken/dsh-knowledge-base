@@ -102,6 +102,39 @@ export function looksSensitiveValue(title, content) {
   return SECRET_VALUE_PATTERN.test(`${asString(title)}\n${asString(content)}`)
 }
 
+/**
+ * The knowledge lines of a note: its `- ` bullets, or the whole body when it
+ * has none (a hand-written entry).
+ */
+export function noteLines(content) {
+  const body = text(content)
+  const bullets = []
+  for (const line of body.split('\n')) {
+    const match = /^\s*[-•*]\s*(.+)$/u.exec(line)
+    if (match !== null && match[1].trim() !== '') bullets.push(match[1].trim())
+  }
+  if (bullets.length > 0) return bullets
+  const flat = body.replace(/^知识点整理（[^）]*）\s*/u, '').trim()
+  return flat === '' ? [] : [flat]
+}
+
+function normalizeLine(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[\s。．.,，;；:：、]/gu, '')
+}
+
+/** Whether one stored line already says what the incoming line says. */
+function coversLine(existing, incoming) {
+  const a = normalizeLine(existing)
+  const b = normalizeLine(incoming)
+  if (a === '' || b === '') return false
+  if (a === b) return true
+  const short = a.length <= b.length ? a : b
+  const long = a.length <= b.length ? b : a
+  return short.length >= 12 && long.includes(short)
+}
+
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
 }
@@ -160,6 +193,7 @@ function emptyState() {
     settings: {
       recall: true,
       reflux: { lastRunAt: null, lastSummary: '' },
+      search: { misses: 0, lastMissAt: null, lastMissQuery: '' },
     },
     entries: [],
   }
@@ -200,6 +234,11 @@ function normalizeState(input) {
     if (settings.reflux !== null && typeof settings.reflux === 'object') {
       if (typeof settings.reflux.lastRunAt === 'string') state.settings.reflux.lastRunAt = settings.reflux.lastRunAt
       if (typeof settings.reflux.lastSummary === 'string') state.settings.reflux.lastSummary = settings.reflux.lastSummary
+    }
+    if (settings.search !== null && typeof settings.search === 'object') {
+      if (Number.isFinite(Number(settings.search.misses))) state.settings.search.misses = Math.max(0, Number(settings.search.misses))
+      if (typeof settings.search.lastMissAt === 'string') state.settings.search.lastMissAt = settings.search.lastMissAt
+      if (typeof settings.search.lastMissQuery === 'string') state.settings.search.lastMissQuery = settings.search.lastMissQuery
     }
   }
   if (Array.isArray(input.entries)) {
@@ -468,7 +507,7 @@ export function createStore(options = {}) {
 
     getSettings() {
       if (encrypted && !unlocked) {
-        return { recall: true, reflux: { lastRunAt: null, lastSummary: '' } }
+        return { recall: true, reflux: { lastRunAt: null, lastSummary: '' }, search: { misses: 0, lastMissAt: null, lastMissQuery: '' } }
       }
       return clone(state.settings)
     },
@@ -521,6 +560,17 @@ export function createStore(options = {}) {
         origin: input?.origin === 'reflux' ? 'reflux' : 'manual',
         sessionId: text(input?.sessionId).slice(0, 120) === '' ? undefined : text(input?.sessionId).slice(0, 120),
         reason: input?.reason === 'confirm' || input?.reason === 'change' ? input.reason : undefined,
+        compare:
+          input?.compare !== null && typeof input?.compare === 'object'
+            ? {
+                withId: text(input.compare.withId).slice(0, 120),
+                withTitle: text(input.compare.withTitle).slice(0, MAX_TITLE),
+                same: Number(input.compare.same ?? 0) || 0,
+                added: Number(input.compare.added ?? 0) || 0,
+                sameLines: Array.isArray(input.compare.sameLines) ? input.compare.sameLines.slice(0, 20) : [],
+                addedLines: Array.isArray(input.compare.addedLines) ? input.compare.addedLines.slice(0, 20) : [],
+              }
+            : undefined,
         createdAt: now,
         updatedAt: now,
       }
@@ -530,12 +580,56 @@ export function createStore(options = {}) {
       return clone(entry)
     },
 
+    /**
+     * Compare a digest note with what the base already says.
+     *
+     * `duplicate` means every knowledge line is already covered by an existing
+     * entry (confirmed or pending): there is nothing new to review.
+     *
+     * @returns {{ duplicate: boolean, same: string[], added: string[], matches: Array<{ id: string, title: string }> }}
+     */
+    compareNote(title, content) {
+      const empty = { duplicate: false, same: [], added: [], matches: [] }
+      if (encrypted && !unlocked) return empty
+      const incoming = noteLines(content)
+      if (incoming.length === 0) return empty
+
+      const corpus = []
+      for (const entry of state.entries) {
+        for (const line of noteLines(entry.content)) corpus.push({ entry, line })
+      }
+
+      const same = []
+      const added = []
+      const matches = new Map()
+      for (const line of incoming) {
+        const hit = corpus.find((item) => coversLine(item.line, line))
+        if (hit === undefined) {
+          added.push(line)
+          continue
+        }
+        same.push(line)
+        matches.set(hit.entry.id, hit.entry.title)
+      }
+
+      return {
+        duplicate: added.length === 0,
+        same,
+        added,
+        matches: [...matches].map(([id, matchedTitle]) => ({ id, title: matchedTitle })),
+      }
+    },
+
     /** Add a knowledge note awaiting review (the daily digest writes here). */
     async addPending(input) {
       requireUnlocked()
       const title = requireText(input?.title, '标题', MAX_TITLE)
       const content = requireText(input?.content, '内容', MAX_CONTENT)
-      return this.add({
+      const comparison = input?.compare ?? this.compareNote(title, content)
+      if (comparison.duplicate === true && input?.force !== true) {
+        return { entry: undefined, discarded: true, compare: comparison }
+      }
+      const entry = await this.add({
         title,
         content,
         tags: Array.isArray(input?.tags) ? input.tags : ['回流', '知识点'],
@@ -546,7 +640,19 @@ export function createStore(options = {}) {
         state: 'pending',
         origin: 'reflux',
         sessionId: input?.sessionId,
+        compare:
+          comparison.matches.length > 0
+            ? {
+                withId: comparison.matches[0].id,
+                withTitle: comparison.matches[0].title,
+                same: comparison.same.length,
+                added: comparison.added.length,
+                sameLines: comparison.same,
+                addedLines: comparison.added,
+              }
+            : undefined,
       })
+      return { entry, discarded: false, compare: comparison }
     },
 
     async update(id, patch) {
@@ -665,6 +771,56 @@ export function createStore(options = {}) {
       }
       if (skipped > 0) lines.push(`（另有 ${skipped} 条未列出，请用 kb_search 检索）`)
       return lines.join('\n')
+    },
+
+    /**
+     * How much of the system-prompt index the base already consumes. The budget
+     * is the signal for when lexical retrieval stops being enough: once entries
+     * fall out of the index the model can no longer see them at all.
+     */
+    indexStats(maxChars = 4000) {
+      if (encrypted && !unlocked) {
+        return { entries: 0, listed: 0, chars: 0, budget: maxChars, truncated: 0 }
+      }
+      const text = this.indexText(maxChars)
+      const matched = /（另有 (\d+) 条未列出/u.exec(text)
+      const truncated = matched === null ? 0 : Number(matched[1])
+      const listed = text === '' ? 0 : text.split('\n').filter((line) => line.startsWith('- ')).length
+      return { entries: listed + truncated, listed, chars: text.length, budget: maxChars, truncated }
+    },
+
+    /** Confirmed entries that would be excluded from a vector index. */
+    sensitiveCount() {
+      if (encrypted && !unlocked) return 0
+      let count = 0
+      for (const entry of state.entries) if (entry.state !== 'pending' && entry.sensitive === true) count += 1
+      return count
+    },
+
+    searchStats() {
+      if (encrypted && !unlocked) return { misses: 0, lastMissAt: null, lastMissQuery: '' }
+      const search = state.settings.search ?? {}
+      return {
+        misses: Number(search.misses) || 0,
+        lastMissAt: typeof search.lastMissAt === 'string' ? search.lastMissAt : null,
+        lastMissQuery: typeof search.lastMissQuery === 'string' ? search.lastMissQuery : '',
+      }
+    },
+
+    /**
+     * Record a query that found nothing while the base was searchable: the
+     * evidence that lexical recall has a gap worth measuring.
+     */
+    async noteMiss(query) {
+      if (encrypted && !unlocked) return this.searchStats()
+      const q = text(query).slice(0, 120)
+      if (q === '') return this.searchStats()
+      state.settings.search.misses = (Number(state.settings.search.misses) || 0) + 1
+      state.settings.search.lastMissAt = iso()
+      state.settings.search.lastMissQuery = q
+      await persist()
+      touch()
+      return this.searchStats()
     },
 
     /**

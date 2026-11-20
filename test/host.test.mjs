@@ -215,6 +215,14 @@ const list = await callRoute('/list', {}, 200)
 assert(list.body.status.encrypted === false && list.body.status.locked === false, 'list reports a plaintext, open vault')
 assert(list.body.total === 2 && list.body.counts.pending === 0, 'list starts with two confirmed entries')
 assert(list.body.reflux.lastRunAt === null, 'reflux starts unrun')
+assert(list.body.index.budget === 4000 && list.body.index.chars > 0, 'list exposes index usage')
+assert(typeof list.body.sensitive === 'number' && list.body.sensitive === 1, 'list exposes the sensitive count')
+
+const missesBefore = (await callRoute('/status', {}, 200)).body.search.misses
+await tools.get('kb_search').execute({ query: '绝对不存在于知识库的词条 xyzzy' }, { agent: { id: 's1' } })
+const statusAfterMiss = await callRoute('/status', {}, 200)
+assert(statusAfterMiss.body.search.misses === missesBefore + 1, 'a missed kb_search is counted')
+assert(statusAfterMiss.body.search.lastMissQuery.includes('xyzzy'), 'the missed query is recorded')
 
 const settingsOff = await callRoute('/settings', { recall: false }, 200)
 assert(settingsOff.body.settings.recall === false, 'settings route stores recall = false')
@@ -275,6 +283,28 @@ assert(!sections[0].text().includes('知识点整理'), 'the pending note stays 
 
 const pendingSearch = await tools.get('kb_search').execute({ query: '知识点整理' }, { agent: { id: 's1' } })
 assert(pendingSearch.count === 0, 'the pending note is not searchable')
+
+/* A second identical note is discarded instead of piling up. */
+const repeatedNote = await callRoute('/pending', { title: '退款与发货规则', content: noteContent }, 200)
+assert(repeatedNote.body.discarded === true && repeatedNote.body.reason === 'duplicate', 'a fully duplicated note is discarded')
+assert(repeatedNote.body.entry === undefined, 'a discarded note stores nothing')
+assert(repeatedNote.body.counts.pending === 1, 'the discarded note does not add a pending entry')
+
+const partialNote = await callRoute(
+  '/pending',
+  {
+    title: '退款与发票',
+    content: `${noteContent}\n- 发票在退款完成后 3 个工作日内开出。`,
+  },
+  200,
+)
+assert(partialNote.body.discarded === false, `a note with new lines is kept: ${JSON.stringify(partialNote.body.compare ?? partialNote.body)}`)
+assert(partialNote.body.compare.same === 1 && partialNote.body.compare.added === 1, 'the response reports the overlap')
+const partialList = await callRoute('/list', {}, 200)
+const partialRow = partialList.body.pending.find((entry) => entry.id === partialNote.body.entry.id)
+assert(partialRow.compare.withTitle === '退款与发货规则', 'the pending row carries its comparison')
+assert(partialRow.compare.addedLines.some((line) => line.includes('发票')), 'the new line is listed for review')
+await callRoute('/delete', { id: partialNote.body.entry.id }, 200)
 
 const confirmed = await callRoute('/confirm', {}, 200)
 assert(confirmed.body.confirmed === 1 && confirmed.body.counts.pending === 0, 'confirm promotes the note')

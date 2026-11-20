@@ -79,6 +79,7 @@ function listEntry(entry) {
     origin: entry.origin === 'reflux' ? 'reflux' : 'manual',
     sessionId: entry.sessionId,
     reason: entry.reason,
+    compare: entry.compare ?? undefined,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
     size: entry.content.length,
@@ -139,6 +140,16 @@ const ENTRY_PROPERTIES = {
   source: { type: 'string', description: '来源（URL、文件名或出处）。' },
   createdAt: { type: 'string', description: '创建时间（ISO 8601）。' },
   updatedAt: { type: 'string', description: '更新时间（ISO 8601）。' },
+  state: { type: 'string', description: '状态：confirmed 或 pending。' },
+  origin: { type: 'string', description: '来源：manual 或 reflux。' },
+  sessionId: { type: 'string', description: '回流条目的来源会话 id。' },
+  reason: { type: 'string', description: '回流原因标记。' },
+  sensitive: { type: 'boolean', description: '是否敏感：不进提示词摘要，将来也不进向量索引。' },
+  compare: {
+    type: 'object',
+    additionalProperties: true,
+    description: '与已有条目的重复度对比（仅在部分重复时出现）。',
+  },
 }
 
 const ENTRY_SCHEMA = {
@@ -184,6 +195,7 @@ function promptSectionText(store) {
     '4. 知识库没有相关条目时，明确说明「知识库中未找到」，直接采用联网结果，并注明该部分来自网络。',
     '5. 用户要求长期保存资料时可调用 kb_add 写入；修改或删除条目请在「设置 → 知识库」里由用户本人完成，你没有这两个工具。',
     '6. 标记为「敏感」的条目（密码、密钥、令牌等）只在用户明确要求时引用，绝不在回复中完整展示，也不要发送到任何外部服务；系统提示词与自动联网检索都不会带上它们。',
+    '7. 定时任务协议：用户消息以「定时任务」开头时，把该消息剩余内容整体建成定时任务（消息里给了时间就用该时间，否则取最近的空闲时段；高峰为周一至周五 9:00-12:00、14:00-18:00，其余时段含周末与节假日全天为空闲），建成后回报任务 id、标题与下次执行时间；不要把它当成话题标签，也不要只执行内容而不排期。',
     '',
   ]
   if (total === 0) {
@@ -331,6 +343,9 @@ function searchTool(store) {
       }
       const query = typeof args?.query === 'string' ? args.query : ''
       const hits = store.search(query, { limit: args?.limit, tags: args?.tags })
+      // A non-empty query with no hit is the evidence that lexical recall has a
+      // gap; it feeds the migration decision shown in Settings.
+      if (hits.length === 0 && query.trim() !== '') await store.noteMiss(query)
       const value = {
         query,
         total: store.count(),
@@ -570,6 +585,8 @@ export function apply(ctx) {
           const digest = store.searchDigest(query, { limit: 3, perEntryChars: 1200, maxChars: 4600 })
           if (digest.hits > 0 && digest.text !== null) {
             remember(exec.callId, { query, hits: digest.hits, text: digest.text })
+          } else if (!store.status().locked) {
+            await store.noteMiss(query)
           }
         }
         return next()
@@ -614,7 +631,13 @@ export function apply(ctx) {
         path: `${PREFIX}/status`,
         handler: route(ctx, async (request, response) => {
           await readBody(request)
-          sendJson(response, 200, { status: store.status(), reflux: { ...refluxTrace } })
+          sendJson(response, 200, {
+            status: store.status(),
+            reflux: { ...refluxTrace },
+            index: store.indexStats(),
+            search: store.searchStats(),
+            sensitive: store.sensitiveCount(),
+          })
         }),
       }),
     'knowledge-base: status route',
@@ -691,6 +714,9 @@ export function apply(ctx) {
             lastSummary: settings.reflux.lastSummary,
             ...refluxTrace,
           }
+          const index = store.indexStats()
+          const search = store.searchStats()
+          const sensitive = store.sensitiveCount()
           if (status.locked) {
             sendJson(response, 200, {
               status,
@@ -700,6 +726,9 @@ export function apply(ctx) {
               counts: { confirmed: 0, pending: 0 },
               settings,
               reflux,
+              index,
+              search,
+              sensitive,
               file: store.file,
             })
             return
@@ -718,6 +747,9 @@ export function apply(ctx) {
             counts,
             settings,
             reflux,
+            index,
+            search,
+            sensitive,
             file: store.file,
           })
         }),
@@ -860,14 +892,38 @@ export function apply(ctx) {
         handler: route(ctx, async (request, response) => {
           ensureUnlocked(store)
           const body = await readBody(request)
-          const entry = await store.addPending({
+          const result = await store.addPending({
             title: body.title,
             content: body.content,
             tags: body.tags,
             source: body.source,
             sessionId: body.sessionId,
           })
-          sendJson(response, 200, { entry, counts: store.counts(), total: store.count() })
+          if (result.discarded === true) {
+            sendJson(response, 200, {
+              discarded: true,
+              reason: 'duplicate',
+              compare: result.compare,
+              counts: store.counts(),
+              total: store.count(),
+            })
+            return
+          }
+          sendJson(response, 200, {
+            discarded: false,
+            entry: result.entry,
+            compare:
+              result.compare.matches.length > 0
+                ? {
+                    withId: result.compare.matches[0].id,
+                    withTitle: result.compare.matches[0].title,
+                    same: result.compare.same.length,
+                    added: result.compare.added.length,
+                  }
+                : undefined,
+            counts: store.counts(),
+            total: store.count(),
+          })
         }),
       }),
     'knowledge-base: pending route',

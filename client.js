@@ -102,6 +102,11 @@ window.__ModuleLoader__.load({
       'reflux.view': '查看全文',
       'reflux.collapse': '收起全文',
       'reflux.loading': '加载中…',
+      'reflux.compareTitle': '与已有条目「{title}」内容重合',
+      'reflux.compareCount': '重复 {same} 条 · 新增 {added} 条',
+      'health.title': '检索健康度',
+      'health.index': '系统提示词索引占用 {used}/{budget} 字，已溢出 {dropped} 条',
+      'health.search': '检索未命中 {misses} 次 · 敏感条目 {sensitive} 条（不参与向量化）',
       'reflux.reasonConfirm': '确认项',
       'reflux.reasonChange': '更改项',
       'reflux.title': '对话回流',
@@ -211,6 +216,11 @@ window.__ModuleLoader__.load({
       'reflux.view': 'Show full text',
       'reflux.collapse': 'Collapse',
       'reflux.loading': 'Loading…',
+      'reflux.compareTitle': 'Overlaps the entry “{title}”',
+      'reflux.compareCount': '{same} duplicate · {added} new',
+      'health.title': 'Retrieval health',
+      'health.index': 'Prompt index uses {used}/{budget} chars, {dropped} entries dropped',
+      'health.search': '{misses} misses · {sensitive} sensitive entries (never vectorised)',
       'reflux.reasonConfirm': 'Confirmation',
       'reflux.reasonChange': 'Change',
       'reflux.title': 'Conversation reflux',
@@ -312,13 +322,16 @@ window.__ModuleLoader__.load({
         flex: 1;
         min-height: 0;
         gap: 10px;
+        overflow-y: auto;
         color: var(--dsw-alias-label-primary);
         font-size: 13px;
         line-height: 20px;
+        /* Room for the sticky search bar so it never paints over content. */
+        scroll-padding-top: 48px;
       }
       .kb-page * { box-sizing: border-box; }
       /* The settings panel's section container is a plain block; while this page
-         is mounted, make it a bounded column so the list owns the scrolling. */
+         is mounted, make it a bounded column so the page owns the scrolling. */
       div:has(> [data-slot="settings.section"] > .kb-page) {
         display: flex;
         flex-direction: column;
@@ -405,7 +418,19 @@ window.__ModuleLoader__.load({
       .kb-switch-title { font-size: 13px; font-weight: 500; }
       .kb-switch-hint { font-size: 11px; line-height: 17px; color: var(--dsw-alias-label-secondary); }
 
-      .kb-toolbar { display: flex; align-items: center; gap: 8px; flex: none; }
+      /* Stays at the top while the intro and settings scroll away. */
+      .kb-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: none;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        padding: 6px 0;
+        margin: -6px 0 0;
+        background: var(--dsw-alias-bg-base);
+      }
       .kb-search { flex: 1; min-width: 0; }
       .kb-input, .kb-textarea {
         width: 100%;
@@ -421,13 +446,11 @@ window.__ModuleLoader__.load({
       .kb-count { flex: none; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 
       .kb-body {
-        flex: 1;
+        flex: none;
         min-height: 0;
-        overflow-y: auto;
         display: flex;
         flex-direction: column;
         gap: 8px;
-        padding-right: 2px;
       }
       .kb-row {
         display: flex;
@@ -476,9 +499,25 @@ window.__ModuleLoader__.load({
         max-height: 300px;
         overflow: auto;
       }
+      /* Partial overlap with an existing entry: show what is new. */
+      .kb-compare {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px dashed var(--dsw-alias-border-l2);
+        font-size: 12px;
+        line-height: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .kb-compare-title { font-weight: 600; }
+      .kb-compare-meta { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+      .kb-compare-line { color: var(--dsw-alias-state-success-primary); word-break: break-word; }
 
       .kb-empty {
-        flex: 1;
+        flex: none;
+        min-height: 220px;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -676,6 +715,26 @@ window.__ModuleLoader__.load({
           pending && typeof entry.content === 'string'
             ? h('div', { key: 'full', className: 'kb-row-full' }, entry.content)
             : h('div', { key: 'preview', className: 'kb-row-preview' }, entry.preview ?? ''),
+          pending && entry.compare !== undefined && entry.compare !== null
+            ? h('div', { key: 'cmp', className: 'kb-compare' }, [
+                h(
+                  'div',
+                  { key: 't', className: 'kb-compare-title' },
+                  fill(t('reflux.compareTitle'), { title: String(entry.compare.withTitle ?? '') }),
+                ),
+                h(
+                  'div',
+                  { key: 'n', className: 'kb-compare-meta' },
+                  fill(t('reflux.compareCount'), {
+                    same: String(entry.compare.same ?? 0),
+                    added: String(entry.compare.added ?? 0),
+                  }),
+                ),
+                ...(Array.isArray(entry.compare.addedLines) ? entry.compare.addedLines : []).map((line, index) =>
+                  h('div', { key: `add-${index}`, className: 'kb-compare-line' }, `+ ${line}`),
+                ),
+              ])
+            : null,
         ]),
         h(
           'div',
@@ -912,6 +971,9 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = useState([])
       const [counts, setCounts] = useState({ confirmed: 0, pending: 0 })
       const [reflux, setReflux] = useState({ lastRunAt: null, lastSummary: '' })
+      const [index, setIndex] = useState({ entries: 0, listed: 0, chars: 0, budget: 4000, truncated: 0 })
+      const [search, setSearch] = useState({ misses: 0, lastMissAt: null, lastMissQuery: '' })
+      const [sensitive, setSensitive] = useState(0)
       const [refluxBusy, setRefluxBusy] = useState(false)
       const [status, setStatus] = useState({ locked: false, encrypted: false, total: 0 })
       const [unlockInput, setUnlockInput] = useState('')
@@ -947,6 +1009,9 @@ window.__ModuleLoader__.load({
           setFile(typeof data.file === 'string' ? data.file : '')
           if (data.status) setStatus(data.status)
           if (data.reflux) setReflux(data.reflux)
+          if (data.index) setIndex(data.index)
+          if (data.search) setSearch(data.search)
+          setSensitive(Number(data.sensitive ?? 0))
           if (data.settings) setSettings(normalizeSettings(data.settings))
         } catch (failure) {
           if (!alive.current) return
@@ -1508,6 +1573,28 @@ window.__ModuleLoader__.load({
             ]),
             h('div', { key: 'meta', className: 'kb-reflux-meta' }, [
               h('span', { key: 'when', className: 'kb-reflux-when' }, refluxStatusText()),
+            ]),
+          ]),
+          h('div', { key: 'health', className: 'kb-reflux' }, [
+            h('div', { key: 'text', className: 'kb-switch-text' }, [
+              h('span', { key: 't', className: 'kb-switch-title' }, t('health.title')),
+              h(
+                'span',
+                { key: 'h', className: 'kb-switch-hint' },
+                fill(t('health.index'), {
+                  used: String(index.chars ?? 0),
+                  budget: String(index.budget ?? 4000),
+                  dropped: String(index.truncated ?? 0),
+                }),
+              ),
+              h(
+                'span',
+                { key: 'm', className: 'kb-switch-hint' },
+                fill(t('health.search'), {
+                  misses: String(search.misses ?? 0),
+                  sensitive: String(sensitive ?? 0),
+                }),
+              ),
             ]),
           ]),
         ]),

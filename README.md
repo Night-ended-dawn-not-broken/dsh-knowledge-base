@@ -72,6 +72,16 @@ dsh plugin --profile desktop add ./dsh-knowledge-base
 - 标题或正文命中 `密码 / 口令 / 密钥 / 令牌 / 验证码 / secret / password / api_key / token` 等关键词时，条目自动标记为「敏感」；编辑时可手动覆盖。
 - 敏感条目**不会**进入系统提示词的摘要、**不会**随联网检索自动附带；只有模型显式调用 `kb_search` 且确实命中时才会返回。
 - 页面列表中的敏感条目预览会被遮罩，需点开编辑才能看到全文。
+- **永远不进入向量索引**：将来启用向量召回时，以 `sensitive === true` 作为排除集（`/status` 的 `sensitive` 计数就是该集合的大小）。敏感条目只保留当前的词法检索形态，既不被嵌入模型读走，也不随向量落盘。
+
+## 检索健康度（向量化的决策依据）
+
+- `/status` 与 `/list` 返回三组指标：
+  - `index: { entries, listed, chars, budget, truncated }` —— 系统提示词索引的占用与溢出条数（预算 4000 字，溢出后未列出的条目模型看不到，只能靠 `kb_search`）；
+  - `search: { misses, lastMissAt, lastMissQuery }` —— 检索未命中的累计次数与最近一次查询；
+  - `sensitive` —— 将来不进向量库的条目数。
+- 设置页「检索健康度」直接显示这些数字。
+- 迁移判据：`index.truncated > 0`（约 36 条）或 `search.misses` 持续增长时，才值得引入向量召回；在此之前词法足够。
 
 ## 优先级的实现方式
 
@@ -84,7 +94,7 @@ dsh plugin --profile desktop add ./dsh-knowledge-base
 ## 数据
 
 - 位置：`%DSH_PROFILE_DIR%\knowledge-base\kb.json`（未设置时回退到 `%DSH_HOME%\knowledge-base\kb.json`）
-- 明文格式：`{ version: 2, settings: { recall, reflux: { lastRunAt, lastSummary } }, entries: [...] }`
+- 明文格式：`{ version: 2, settings: { recall, reflux: { lastRunAt, lastSummary }, search: { misses, lastMissAt, lastMissQuery } }, entries: [...] }`
 - 条目字段：`state`（`confirmed` / `pending`）、`origin`（`manual` / `reflux`）、`sensitive`、`sessionId`、`reason`
 - 旧版 `settings.gate` 会自动读成 `recall`；旧条目默认 `confirmed`
 - 密文格式：`{ version: 2, encrypted: true, alg: 'dsh-kb-aes-256-gcm', kdf: { name: 'scrypt', N, r, p, salt }, iv, tag, data }`
