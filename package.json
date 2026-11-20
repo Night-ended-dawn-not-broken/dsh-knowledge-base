@@ -1,6 +1,6 @@
 {
   "name": "@night-ended-dawn-not-broken/dsh-knowledge-base",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Manually curated knowledge base: the agent consults it before web search and treats its content as authoritative.",
   "type": "module",
   "license": "MIT",
